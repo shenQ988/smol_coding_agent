@@ -1,0 +1,20 @@
+# Agent configuration
+agent:
+  provider: anthropic  # anthropic, openai, or ollama
+  model: claude-sonnet-4-6    # model name
+  max_iterations: 15           # safety limit for ReAct loop
+  temperature: 0
+
+# MCP servers (Phase 2 — leave empty for now)
+mcp_servers: {}
+  # github:
+  #   command: npx
+  #   args: ["@modelcontextprotocol/server-github"]
+  #   env:
+  #     GITHUB_TOKEN: your_token_here
+
+# Skills directory
+skills_dir: ./skills
+
+# Approval policy: "ask", "auto", or "deny"
+approval_policy: ask
