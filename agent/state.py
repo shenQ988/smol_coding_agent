@@ -33,8 +33,6 @@ def create_initial_state(
     """
     Create a fresh AgentState for a new user turn.
     
-    This is like Raschka's session initialization:
-    self.session = {"history": [], "memory": {"task": "", "files": [], "notes": []}}
     """
     return {
         "messages": [HumanMessage(content=user_message)],

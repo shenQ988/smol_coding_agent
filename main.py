@@ -2,6 +2,7 @@
 """CLI entry point — the REPL that drives the agent."""
 
 import argparse
+import asyncio
 import os
 import re
 import yaml
@@ -18,7 +19,6 @@ from tools import filesystem, shell, search
 from agent.state import create_initial_state
 from context.skills import SkillStore
 from tools.skills import set_skill_store
-import asyncio
 from commands.registry import dispatch
 from providers.factory import create_llm
 from agent.cost_tracker import CostTracker
@@ -44,7 +44,7 @@ def load_config(path: str = "config.yaml") -> dict:
     return {}
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description="LangGraph Coding Agent")
     parser.add_argument("--provider", default=None, help="LLM provider")
     parser.add_argument("--model", default=None, help="Model name")
@@ -59,7 +59,7 @@ def main():
     mcp_manager = MCPManager()
     mcp_servers = config.get("mcp_servers", {})
     if mcp_servers:
-        asyncio.run(mcp_manager.connect_all(mcp_servers))
+        await mcp_manager.connect_all(mcp_servers)
     if mcp_servers:
         mcp_tools = create_mcp_langchain_tools(mcp_manager)
     else:
@@ -105,8 +105,9 @@ def main():
     graph_config = {"configurable": {"thread_id": thread_id}}
 
     # Welcome message
+    print("     (•ᴗ•)  smol — a tiny coding agent   ")
     print("╭────────────────────────────────────────╮")
-    print("│        Coding Agent (LangGraph)        │")
+    print("│           SMOL Coding Agent            │")
     print("│  /help for commands, Ctrl+C to exit    │")
     print(f"│  Provider: {provider}, Model: {model:<16s}│")
     print("╰────────────────────────────────────────╯")
@@ -224,7 +225,8 @@ def main():
             print(f"\033[31mError: {e}\033[0m")
 
     print("Session ended.")
+    await mcp_manager.close()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

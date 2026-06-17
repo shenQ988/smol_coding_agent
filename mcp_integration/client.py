@@ -12,7 +12,9 @@ class MCPManager:
 
     def __init__(self):
         self.sessions: dict[str, ClientSession] = {}
-        self.tools: dict[str, dict] = {}  # full_name -> tool info
+        self.tools: dict[str, dict] = {}
+        self._stdio_cms: list[Any] = []   # keep context managers alive
+        self._session_cms: list[Any] = []
 
     async def connect(self, name: str, command: str, args: list[str] = None,
                       env: dict[str, str] = None):
@@ -22,11 +24,16 @@ class MCPManager:
             args=args or [],
             env=env,
         )
-        read_stream, write_stream = await stdio_client(params).__aenter__()
-        session = await ClientSession(read_stream, write_stream).__aenter__()
+        stdio_cm = stdio_client(params)
+        read_stream, write_stream = await stdio_cm.__aenter__()
+        self._stdio_cms.append(stdio_cm)
+
+        session_cm = ClientSession(read_stream, write_stream)
+        session = await session_cm.__aenter__()
+        self._session_cms.append(session_cm)
+
         await session.initialize()
 
-        # Discover tools
         result = await session.list_tools()
         for tool in result.tools:
             full_name = f"mcp__{name}__{tool.name}"
@@ -54,6 +61,19 @@ class MCPManager:
                 )
             except Exception as e:
                 print(f"  Warning: failed to connect to {name}: {e}")
+
+    async def close(self):
+        """Cleanly close all sessions and stdio connections."""
+        for cm in reversed(self._session_cms):
+            try:
+                await cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+        for cm in reversed(self._stdio_cms):
+            try:
+                await cm.__aexit__(None, None, None)
+            except Exception:
+                pass
 
     async def call_tool(self, full_name: str, args: dict) -> str:
         """Call an MCP tool by its full name."""
