@@ -5,7 +5,7 @@ agent:
   max_iterations: 15           # safety limit for ReAct loop
   temperature: 0
 
-# MCP servers (Phase 2 — leave empty for now)
+# MCP servers 
 mcp_servers: {}
   # github:
   #   command: npx

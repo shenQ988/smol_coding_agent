@@ -3,6 +3,7 @@
 from tools.filesystem import list_files, read_file, write_file, patch_file
 from tools.shell import run_shell
 from tools.search import search
+from tools.skills import load_skill
 
 # Risky tools that need approval before execution
 RISKY_TOOLS = {"run_shell", "write_file", "patch_file"}
@@ -15,9 +16,19 @@ SAFE_TOOLS = {"list_files", "read_file", "search"}
 
 def get_builtin_tools() -> list:
     """Return all built-in tool instances."""
-    return [list_files, read_file, write_file, patch_file, run_shell, search]
+    return [list_files, read_file, write_file, patch_file, run_shell, search, load_skill]
 
 
 def is_risky(tool_name: str) -> bool:
     """Check if a tool needs user approval."""
-    return tool_name in RISKY_TOOLS
+    if tool_name.startswith("mcp__"):
+        return True
+    if tool_name in RISKY_TOOLS:
+        return True
+    return False
+
+def get_all_tools(mcp_tools: list) -> list:
+    """Merge builtin tools with mcp tools."""
+    builtin = get_all_tools()
+    mcp = mcp_tools or []
+    return builtin + mcp

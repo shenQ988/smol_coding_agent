@@ -4,14 +4,17 @@
 import argparse
 import yaml
 from pathlib import Path
-
+from mcp.client import MCPManager
+from mcp.tool_bridge import create_mcp_langchain_tools
 from langchain_core.messages import HumanMessage
 
 from agent.graph import build_graph
 from context.workspace import WorkspaceContext
 from tools import filesystem, shell, search
 from agent.state import create_initial_state
-
+from context.skills import SkillStore
+from tools.skills import set_skill_store
+import asyncio
 def load_config(path: str = "config.yaml") -> dict:
     """Load config from YAML file."""
     config_path = Path(path)
@@ -33,6 +36,14 @@ def main():
     # Load config (CLI args override YAML)
     config = load_config(args.config)
     agent_config = config.get("agent", {})
+    mcp_manager = MCPManager()
+    mcp_servers = config.get("mcp_servers", {})
+    if mcp_servers:
+        asyncio.run(mcp_manager.connect_all(mcp_servers))
+    if mcp_servers:
+        mcp_tools = create_mcp_langchain_tools(mcp_manager)
+    else:
+        mcp_tools = []
 
     provider = args.provider or agent_config.get("provider", "anthropic")
     model = args.model or agent_config.get("model", "claude-sonnet-4-6")
@@ -48,12 +59,18 @@ def main():
     workspace = WorkspaceContext(cwd)
     workspace_prompt = workspace.to_prompt_string()
 
+    # add skills 
+    skill_store = SkillStore(Path("./skills"))
+    set_skill_store(skill_store)
+
+
     # Build the graph
     graph = build_graph(
         provider=provider,
         model=model,
         max_iterations=max_iter,
         temperature=agent_config.get("temperature", 0),
+        extra_tools=mcp_tools
     )
 
     # Session config — LangGraph uses thread_id for session management
@@ -62,7 +79,7 @@ def main():
 
     # Welcome message
     print("╭────────────────────────────────────────╮")
-    print("│  Swarm Coding Agent (LangGraph)        │")
+    print("│        Coding Agent (LangGraph)        │")
     print("│  /help for commands, Ctrl+C to exit    │")
     print(f"│  Provider: {provider}, Model: {model:<16s}│")
     print("╰────────────────────────────────────────╯")

@@ -8,15 +8,16 @@ from langgraph.types import interrupt
 
 from agent.state import AgentState
 from tools.registry import is_risky
+from context.skills import SkillStore
 
-
-def build_system_message(state: AgentState) -> SystemMessage:
+def build_system_message(state: AgentState, skill_store) -> SystemMessage:
     """Construct the system prompt from workspace context and memory."""
     memory = state.get("memory", {})
     memory_text = f"""Memory:
 - task: {memory.get('task', '-')}
 - files: {', '.join(memory.get('files', [])) or '-'}
 - notes: {'; '.join(memory.get('notes', [])) or '-'}"""
+    skill_catalog = skill_store.get_catalog()
 
     content = f"""You are a coding agent. You help users with programming tasks.
 
@@ -28,6 +29,8 @@ Rules:
 - Only use run_shell for running programs, tests, or git commands.
 - Be concise in your final answers.
 - If a task is done, say so clearly.
+- Available skills (request one by name if relevant to the task):
+{skill_catalog}
 
 {state.get('workspace_context', '')}
 
@@ -117,7 +120,7 @@ def act(state: AgentState, tool_map: dict) -> dict[str, Any]:
         "memory": memory,
     }
 
-
+def 
 def should_continue(state: AgentState) -> str:
     """
     Conditional edge: decide whether to loop or stop.

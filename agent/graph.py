@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 from functools import partial
+import yaml
+
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent.state import AgentState
 from agent.nodes import think, act, should_continue
-from tools.registry import get_builtin_tools
+from tools.registry import  get_builtin_tools
 from providers.factory import create_llm
-
-
+from mcp.client import MCPManager
+from mcp.tool_bridge import create_mcp_langchain_tools
 def build_graph(
     provider: str = "anthropic",
     model: str = "claude-sonnet-4-6",
     max_iterations: int = 15,
+    extra_tools=None,     
     **llm_kwargs,
 ):
     """
@@ -27,8 +30,13 @@ def build_graph(
     # 1. Create the LLM
     llm = create_llm(provider, model, **llm_kwargs)
 
+
+   
+
     # 2. Get tools and bind them to the LLM
     builtin_tools = get_builtin_tools()
+    
+    builtin_tools = builtin_tools + (extra_tools or [])
     llm_with_tools = llm.bind_tools(builtin_tools)
 
     # 3. Build a tool lookup map: name -> tool function
