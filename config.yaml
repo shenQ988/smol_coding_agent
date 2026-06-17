@@ -6,12 +6,12 @@ agent:
   temperature: 0
 
 # MCP servers 
-mcp_servers: {}
-  # github:
-  #   command: npx
-  #   args: ["@modelcontextprotocol/server-github"]
-  #   env:
-  #     GITHUB_TOKEN: your_token_here
+mcp_servers: 
+  github:
+    command: npx
+    args: ["@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
 
 # Skills directory
 skills_dir: ./skills

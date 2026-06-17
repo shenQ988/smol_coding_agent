@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from functools import partial
+from pathlib import Path
 import yaml
 
 
@@ -12,14 +13,19 @@ from agent.state import AgentState
 from agent.nodes import think, act, should_continue
 from tools.registry import  get_builtin_tools
 from providers.factory import create_llm
-from mcp.client import MCPManager
-from mcp.tool_bridge import create_mcp_langchain_tools
+from mcp_integration.client import MCPManager
+from mcp_integration.tool_bridge import create_mcp_langchain_tools
+from agent.cost_tracker import CostTracker
+from context.skills import SkillStore
+
 def build_graph(
     provider: str = "anthropic",
     model: str = "claude-sonnet-4-6",
     max_iterations: int = 15,
     extra_tools=None,     
-    **llm_kwargs,
+    llm = None,
+    cost_tracker = None,
+    **llm_kwargs
 ):
     """
     Build the agent graph.
@@ -28,7 +34,7 @@ def build_graph(
         (compiled_graph, config_dict)
     """
     # 1. Create the LLM
-    llm = create_llm(provider, model, **llm_kwargs)
+    llm = llm or create_llm(provider, model, **llm_kwargs)
 
 
    
@@ -43,7 +49,8 @@ def build_graph(
     tool_map = {tool.name: tool for tool in builtin_tools}
 
     # 4. Create partial node functions (bake in dependencies)
-    think_node = partial(think, llm_with_tools=llm_with_tools)
+    skill_store = SkillStore(Path(__file__).parent.parent / "skills")
+    think_node = partial(think, llm_with_tools=llm_with_tools, skill_store=skill_store, cost_tracker=cost_tracker)
     act_node = partial(act, tool_map=tool_map)
 
     # 5. Build the graph

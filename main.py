@@ -2,11 +2,15 @@
 """CLI entry point — the REPL that drives the agent."""
 
 import argparse
+import os
+import re
 import yaml
 from pathlib import Path
-from mcp.client import MCPManager
-from mcp.tool_bridge import create_mcp_langchain_tools
+from dotenv import load_dotenv
+from mcp_integration.client import MCPManager
+from mcp_integration.tool_bridge import create_mcp_langchain_tools
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 
 from agent.graph import build_graph
 from context.workspace import WorkspaceContext
@@ -15,12 +19,28 @@ from agent.state import create_initial_state
 from context.skills import SkillStore
 from tools.skills import set_skill_store
 import asyncio
+from commands.registry import dispatch
+from providers.factory import create_llm
+from agent.cost_tracker import CostTracker
+def _expand_env_vars(obj):
+    """Recursively expand ${VAR} references in config strings."""
+    if isinstance(obj, str):
+        return re.sub(r"\$\{([^}]+)\}", lambda m: os.environ.get(m.group(1), m.group(0)), obj)
+    if isinstance(obj, dict):
+        return {k: _expand_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_env_vars(v) for v in obj]
+    return obj
+
+
 def load_config(path: str = "config.yaml") -> dict:
-    """Load config from YAML file."""
+    """Load config from YAML file, expanding ${VAR} references from environment."""
+    load_dotenv()
     config_path = Path(path)
     if config_path.exists():
         with open(config_path) as f:
-            return yaml.safe_load(f) or {}
+            raw = yaml.safe_load(f) or {}
+        return _expand_env_vars(raw)
     return {}
 
 
@@ -62,7 +82,12 @@ def main():
     # add skills 
     skill_store = SkillStore(Path("./skills"))
     set_skill_store(skill_store)
+    
 
+    #create the llm
+    llm = create_llm(provider, model, temperature=agent_config.get("temperature", 0))
+
+    cost_tracker = CostTracker(model=model)
 
     # Build the graph
     graph = build_graph(
@@ -70,7 +95,9 @@ def main():
         model=model,
         max_iterations=max_iter,
         temperature=agent_config.get("temperature", 0),
-        extra_tools=mcp_tools
+        extra_tools=mcp_tools, 
+        llm = llm, 
+        cost_tracker= cost_tracker
     )
 
     # Session config — LangGraph uses thread_id for session management
@@ -84,7 +111,14 @@ def main():
     print(f"│  Provider: {provider}, Model: {model:<16s}│")
     print("╰────────────────────────────────────────╯")
     print()
-
+    command_context = {
+        "graph": graph,
+        "graph_config": graph_config,
+        "llm": llm,      # now this is defined
+        "cost_tracker": cost_tracker,
+        "provider": provider,
+        "model": model,
+    }
     # The REPL loop
     while True:
         try:
@@ -97,24 +131,41 @@ def main():
             continue
 
         # Slash commands
-        if user_input == "/exit":
-            break
-        if user_input == "/help":
-            print("""Commands:
-  /exit    — quit the agent
-  /help    — show this help
-  /model   — show current model
-  /memory  — show agent memory
-  /clear   — clear conversation""")
+#         if user_input == "/exit":
+#             break
+#         if user_input == "/help":
+#             print("""Commands:
+#   /exit    — quit the agent
+#   /help    — show this help
+#   /model   — show current model
+#   /memory  — show agent memory
+#   /clear   — clear conversation""")
+#             continue
+#         if user_input == "/model":
+#             print(f"Provider: {provider}, Model: {model}")
+#             continue
+#         if user_input == "/clear":
+#             thread_id = f"session_{id(object())}"
+#             graph_config = {"configurable": {"thread_id": thread_id}}
+#             print("Conversation cleared.")
+#             continue
+
+        if user_input.startswith("/"):
+            result = dispatch(user_input, **command_context)
+
+            if result is None:
+                print(f"Unknown command: {user_input}")
+            elif result == "__EXIT__":
+                break
+            elif result.startswith("__NEW_THREAD__"):
+                thread_id = result.removeprefix("__NEW_THREAD__")
+                graph_config = {"configurable": {"thread_id": thread_id}}
+                command_context["graph_config"] = graph_config
+                print("Conversation cleared.")
+            else:
+                print(result)
             continue
-        if user_input == "/model":
-            print(f"Provider: {provider}, Model: {model}")
-            continue
-        if user_input == "/clear":
-            thread_id = f"session_{id(object())}"
-            graph_config = {"configurable": {"thread_id": thread_id}}
-            print("Conversation cleared.")
-            continue
+        
 
         # Build initial state for this turn
         initial_state = create_initial_state(
@@ -125,34 +176,47 @@ def main():
 
         # Run the graph
         try:
-            # Stream events for visibility
-            for event in graph.stream(initial_state, graph_config, stream_mode="updates"):
-                if not isinstance(event, dict):
-                    print(f"DEBUG: unexpected event type: {type(event)}")
-                    continue
-                for node_name, node_output in event.items():
-                    if not isinstance(node_output, dict):
-                        print(f"DEBUG: unexpected output type from {node_name}: {type(node_output)}")
+            stream_input = initial_state
+            while True:
+                interrupted = False
+                for event in graph.stream(stream_input, graph_config, stream_mode="updates"):
+                    if not isinstance(event, dict):
                         continue
-                    print(f"DEBUG: node = {node_name}, keys = {node_output.keys()}")
-                    if node_name == "think":
-                        # Print the LLM's response
-                        msgs = node_output.get("messages", [])
-                        for msg in msgs:
-                            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                                for tc in msg.tool_calls:
-                                    print(f"  \033[33m⚡ {tc['name']}\033[0m({tc['args']})")
-                            elif hasattr(msg, "content") and msg.content:
-                                print(f"\n{msg.content}")
+                    for node_name, node_output in event.items():
+                        if node_name == "__interrupt__":
+                            interrupted = True
+                            interrupts = node_output if isinstance(node_output, (list, tuple)) else [node_output]
+                            for intr in interrupts:
+                                msg = intr.value.get("message", f"Approve {intr.value.get('tool')}?") if hasattr(intr, "value") else str(intr)
+                                print(f"\n  \033[33m⚠ {msg}\033[0m")
+                            try:
+                                decision = input("  approve? [y/N] ").strip().lower()
+                            except (KeyboardInterrupt, EOFError):
+                                decision = "n"
+                            stream_input = Command(resume=decision)
+                            break  # restart stream with resume command
 
-                    elif node_name == "act":
-                        # Print tool results
-                        msgs = node_output.get("messages", [])
-                        for msg in msgs:
-                            content = str(msg.content)
-                            if len(content) > 500:
-                                content = content[:500] + "..."
-                            print(f"  \033[32m→ {content}\033[0m")
+                        if not isinstance(node_output, dict):
+                            continue
+                        if node_name == "think":
+                            msgs = node_output.get("messages", [])
+                            for msg in msgs:
+                                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                                    for tc in msg.tool_calls:
+                                        print(f"  \033[33m⚡ {tc['name']}\033[0m({tc['args']})")
+                                elif hasattr(msg, "content") and msg.content:
+                                    print(f"\n{msg.content}")
+                        elif node_name == "act":
+                            msgs = node_output.get("messages", [])
+                            for msg in msgs:
+                                content = str(msg.content)
+                                if len(content) > 500:
+                                    content = content[:500] + "..."
+                                print(f"  \033[32m→ {content}\033[0m")
+                    if interrupted:
+                        break  # restart outer while loop with resume
+                else:
+                    break  # stream exhausted normally, exit while loop
 
         except KeyboardInterrupt:
             print("\n(interrupted)")

@@ -5,7 +5,7 @@ import asyncio
 from typing import Any, Optional, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, create_model
-from mcp.client import MCPManager
+from mcp_integration.client import MCPManager
 
 
 def build_pydantic_model(tool_def: dict) -> Type[BaseModel]:

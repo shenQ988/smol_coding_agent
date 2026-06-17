@@ -10,14 +10,14 @@ from agent.state import AgentState
 from tools.registry import is_risky
 from context.skills import SkillStore
 
-def build_system_message(state: AgentState, skill_store) -> SystemMessage:
+def build_system_message(state: AgentState, skill_store=None) -> SystemMessage:
     """Construct the system prompt from workspace context and memory."""
     memory = state.get("memory", {})
     memory_text = f"""Memory:
 - task: {memory.get('task', '-')}
 - files: {', '.join(memory.get('files', [])) or '-'}
 - notes: {'; '.join(memory.get('notes', [])) or '-'}"""
-    skill_catalog = skill_store.get_catalog()
+    skill_catalog = skill_store.get_catalog() if skill_store is not None else "- none"
 
     content = f"""You are a coding agent. You help users with programming tasks.
 
@@ -39,15 +39,22 @@ Rules:
     return SystemMessage(content=content)
 
 
-def think(state: AgentState, llm_with_tools) -> dict[str, Any]:
+def think(state: AgentState, llm_with_tools, skill_store=None, cost_tracker=None) -> dict[str, Any]:
     """
     THINK node: Send the full state to the LLM and get a response.
     The LLM either returns text (final answer) or tool_calls (action).
     """
-    system = build_system_message(state)
+    system = build_system_message(state, skill_store)
     messages = [system] + state["messages"]
 
     response = llm_with_tools.invoke(messages)
+    if cost_tracker is not None and getattr(response, "usage_metadata", None):
+        usage = response.usage_metadata
+        cost_tracker.add_usage(
+            usage.get("input_tokens", 0), 
+            usage.get("output_tokens", 0)
+        )
+
     print(f"DEBUG AI: response = {response}")
     print(f"DEBUG AI: content = {response.content}")
     print(f"DEBUG AI: tool_calls = {response.tool_calls}")
@@ -120,7 +127,7 @@ def act(state: AgentState, tool_map: dict) -> dict[str, Any]:
         "memory": memory,
     }
 
-def 
+
 def should_continue(state: AgentState) -> str:
     """
     Conditional edge: decide whether to loop or stop.

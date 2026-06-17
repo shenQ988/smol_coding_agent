@@ -34,7 +34,7 @@ class SkillStore:
     
     def get_catalog(self) -> str:
         lines = []
-        for name, content in self.skills.item():
+        for name, content in self.skills.items():
             first_line = content.strip().splitlines()[0].strip("# ")
             lines.append(f"- {name}: {first_line}")
         return "\n".join(lines) or "- none"
