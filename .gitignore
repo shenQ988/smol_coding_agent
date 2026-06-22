@@ -26,6 +26,8 @@ Thumbs.db
 
 # Project specific
 sessions.db
+.checkpoints.db
+.branches.json
 *.gguf
 test_tool.py
 

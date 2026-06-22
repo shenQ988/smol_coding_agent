@@ -23,6 +23,7 @@ from tools.skills import set_skill_store
 from commands.registry import dispatch
 from providers.factory import create_llm
 from agent.cost_tracker import CostTracker
+
 def _expand_env_vars(obj):
     """Recursively expand ${VAR} references in config strings."""
     if isinstance(obj, str):

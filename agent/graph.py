@@ -7,7 +7,7 @@ import yaml
 
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from agent.state import AgentState
 from agent.nodes import think, act, should_continue, summarize
@@ -82,7 +82,7 @@ def build_graph(
     graph.add_edge("summarize", END)
 
     # 6. Compile with checkpointer for session persistence
-    checkpointer = MemorySaver()  # In-memory; swap to SqliteSaver for disk persistence
+    checkpointer = SqliteSaver.from_conn_string(".checkpoints.db")
     compiled = graph.compile(checkpointer=checkpointer)
 
     return compiled
