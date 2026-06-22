@@ -3,8 +3,7 @@
 from __future__ import annotations
 from functools import partial
 from pathlib import Path
-import yaml
-
+import sqlite3
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -22,16 +21,17 @@ def build_graph(
     provider: str = "anthropic",
     model: str = "claude-sonnet-4-6",
     max_iterations: int = 15,
-    extra_tools=None,     
-    llm = None,
-    cost_tracker = None,
+    extra_tools=None,
+    llm=None,
+    cost_tracker=None,
+    db_path: str = ".checkpoints.db",
     **llm_kwargs
 ):
     """
     Build the agent graph.
 
     Returns:
-        (compiled_graph, config_dict)
+        (compiled_graph, sqlite3.Connection) — caller must close the connection on exit.
     """
     # 1. Create the LLM
     llm = llm or create_llm(provider, model, **llm_kwargs)
@@ -82,7 +82,8 @@ def build_graph(
     graph.add_edge("summarize", END)
 
     # 6. Compile with checkpointer for session persistence
-    checkpointer = SqliteSaver.from_conn_string(".checkpoints.db")
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
     compiled = graph.compile(checkpointer=checkpointer)
 
-    return compiled
+    return compiled, conn

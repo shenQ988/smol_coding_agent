@@ -92,14 +92,14 @@ async def main():
     cost_tracker = CostTracker(model=model)
 
     # Build the graph
-    graph = build_graph(
+    graph, db_conn = build_graph(
         provider=provider,
         model=model,
         max_iterations=max_iter,
         temperature=agent_config.get("temperature", 0),
-        extra_tools=mcp_tools, 
-        llm = llm, 
-        cost_tracker= cost_tracker
+        extra_tools=mcp_tools,
+        llm=llm,
+        cost_tracker=cost_tracker,
     )
 
     # Branch manager — tracks named conversation branches
@@ -239,6 +239,7 @@ async def main():
 
     print("Session ended.")
     await mcp_manager.close()
+    db_conn.close()
 
 
 if __name__ == "__main__":
