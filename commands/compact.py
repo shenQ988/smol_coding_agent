@@ -14,7 +14,6 @@ def run(graph, graph_config, llm, **kwargs) -> str:
     compacted = compact_history(old_messages, llm)
 
     removals = [RemoveMessage(id=m.id) for m in old_messages]
-    graph.update_state(graph_config, {"messages": removals})
-    graph.update_state(graph_config, {"messages": compacted})
+    graph.update_state(graph_config, {"messages": removals + compacted})
 
     return f"Compacted {len(old_messages)} messages into {len(compacted)}."

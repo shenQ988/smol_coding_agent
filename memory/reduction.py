@@ -9,8 +9,10 @@ def summarize_messages(messages: list, llm) -> str:
     for m in messages:
         role = type(m).__name__.replace("Message", "")
         content = m.content if isinstance(m.content, str) else str(m.content)
-        transcript_lines.append(f"{role}: {content[:300]}")
+        transcript_lines.append(f"{role}: {content[:1500]}")
     transcript = "\n".join(transcript_lines)
+    if len(transcript) > 30000:
+        transcript = transcript[:30000] + "\n... (truncated)"
 
     response = llm.invoke([
         SystemMessage(content=(

@@ -22,6 +22,8 @@ def search(pattern: str, path: str = ".") -> str:
         path: Directory to search in. Defaults to workspace root.
     """
     target = (WORKSPACE_ROOT / path).resolve()
+    if not target.is_relative_to(WORKSPACE_ROOT.resolve()):
+        return f"Error: path escapes workspace: {path}"
 
     if shutil.which("rg"):
         cmd = ["rg", "--no-heading", "-n", "--max-count=50", pattern, str(target)]

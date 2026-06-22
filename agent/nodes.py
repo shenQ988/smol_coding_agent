@@ -9,7 +9,6 @@ from langgraph.types import interrupt
 
 from agent.state import AgentState
 from tools.registry import is_risky
-from context.skills import SkillStore
 
 TOOL_TIMEOUT = 30  # seconds before a tool call is killed
 
@@ -116,15 +115,17 @@ def act(state: AgentState, tool_map: dict) -> dict[str, Any]:
             tool_call_id=tool_call["id"],
         ))
 
-        # Update memory 
+        # Update memory
         if tool_name in ("write_file", "patch_file"):
             path = tool_args.get("path", "")
-            if path and path not in memory.get("files", []):
+            if path:
                 files = list(memory.get("files", []))
                 if path in files:
                     files.remove(path)
                 files.append(path)
-                memory["files"] = files[-10:]  # keep last 10
+                memory["files"] = files[-10:]
+
+    memory["notes"] = memory.get("notes", [])[-20:]  # cap notes to last 20
 
     last_tc = last_message.tool_calls[-1] if last_message.tool_calls else None
     last_tool_call = {"name": last_tc["name"], "args": last_tc["args"]} if last_tc else None

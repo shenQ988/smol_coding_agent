@@ -29,6 +29,6 @@ def is_risky(tool_name: str) -> bool:
 
 def get_all_tools(mcp_tools: list) -> list:
     """Merge builtin tools with mcp tools."""
-    builtin = get_all_tools()
+    builtin = get_builtin_tools()
     mcp = mcp_tools or []
     return builtin + mcp

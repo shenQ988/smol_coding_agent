@@ -17,7 +17,6 @@ from agent.graph import build_graph
 from agent.branches import BranchManager
 from context.workspace import WorkspaceContext
 from tools import filesystem, shell, search
-from agent.state import create_initial_state
 from context.skills import SkillStore
 from tools.skills import set_skill_store
 from commands.registry import dispatch
@@ -77,9 +76,8 @@ async def main():
     shell.set_workspace_root(cwd)
     search.set_workspace_root(cwd)
 
-    # Scan workspace
+    # Workspace scanner — to_prompt_string() is called per-turn to stay fresh
     workspace = WorkspaceContext(cwd)
-    workspace_prompt = workspace.to_prompt_string()
 
     # add skills 
     skill_store = SkillStore(Path("./skills"))
@@ -91,155 +89,147 @@ async def main():
 
     cost_tracker = CostTracker(model=model)
 
-    # Build the graph
-    graph, db_conn = build_graph(
-        provider=provider,
-        model=model,
-        max_iterations=max_iter,
-        temperature=agent_config.get("temperature", 0),
-        extra_tools=mcp_tools,
-        llm=llm,
-        cost_tracker=cost_tracker,
-    )
-
-    # Branch manager — tracks named conversation branches
-    branch_manager = BranchManager()
-    thread_id = branch_manager.switch(branch_manager.get_active())
-    graph_config = {"configurable": {"thread_id": thread_id}}
-
-    # Welcome message
-    print("     (•ᴗ•)  smol — a tiny coding agent   ")
-    print("╭────────────────────────────────────────╮")
-    print("│           SMOL Coding Agent            │")
-    print("│  /help for commands, Ctrl+C to exit    │")
-    print(f"│  Provider: {provider}, Model: {model:<16s}│")
-    print("╰────────────────────────────────────────╯")
-    print()
-    command_context = {
-        "graph": graph,
-        "graph_config": graph_config,
-        "llm": llm,
-        "cost_tracker": cost_tracker,
-        "provider": provider,
-        "model": model,
-        "branch_manager": branch_manager,
-    }
-    # The REPL loop
-    while True:
-        try:
-            active_branch = branch_manager.get_active()
-            user_input = input(f"\033[36msmol[{active_branch}]>\033[0m ").strip()
-        except (KeyboardInterrupt, EOFError):
-            print("\nGoodbye!")
-            break
-
-        if not user_input:
-            continue
-
-        # Slash commands
-#         if user_input == "/exit":
-#             break
-#         if user_input == "/help":
-#             print("""Commands:
-#   /exit    — quit the agent
-#   /help    — show this help
-#   /model   — show current model
-#   /memory  — show agent memory
-#   /clear   — clear conversation""")
-#             continue
-#         if user_input == "/model":
-#             print(f"Provider: {provider}, Model: {model}")
-#             continue
-#         if user_input == "/clear":
-#             thread_id = f"session_{id(object())}"
-#             graph_config = {"configurable": {"thread_id": thread_id}}
-#             print("Conversation cleared.")
-#             continue
-
-        if user_input.startswith("/"):
-            result = dispatch(user_input, **command_context)
-
-            if result is None:
-                print(f"Unknown command: {user_input}")
-            elif result == "__EXIT__":
-                break
-            elif result.startswith("__NEW_THREAD__"):
-                thread_id = result.removeprefix("__NEW_THREAD__")
-                graph_config = {"configurable": {"thread_id": thread_id}}
-                command_context["graph_config"] = graph_config
-                print("Conversation cleared.")
-            elif result.startswith("__SWITCH_BRANCH__"):
-                payload = result.removeprefix("__SWITCH_BRANCH__")
-                first_line, _, message = payload.partition("\n")
-                thread_id, _, branch_name = first_line.partition(":")
-                graph_config = {"configurable": {"thread_id": thread_id}}
-                command_context["graph_config"] = graph_config
-                if message:
-                    print(message)
-            else:
-                print(result)
-            continue
-        
-
-        # Build initial state for this turn
-        initial_state = create_initial_state(
-            user_message=user_input,
-            workspace_context=workspace_prompt,
+    db_conn = None
+    try:
+        # Build the graph
+        graph, db_conn = build_graph(
+            provider=provider,
+            model=model,
             max_iterations=max_iter,
+            temperature=agent_config.get("temperature", 0),
+            extra_tools=mcp_tools,
+            llm=llm,
+            cost_tracker=cost_tracker,
         )
 
-        # Run the graph
-        try:
-            stream_input = initial_state
-            while True:
-                interrupted = False
-                for event in graph.stream(stream_input, graph_config, stream_mode="updates"):
-                    if not isinstance(event, dict):
-                        continue
-                    for node_name, node_output in event.items():
-                        if node_name == "__interrupt__":
-                            interrupted = True
-                            interrupts = node_output if isinstance(node_output, (list, tuple)) else [node_output]
-                            for intr in interrupts:
-                                msg = intr.value.get("message", f"Approve {intr.value.get('tool')}?") if hasattr(intr, "value") else str(intr)
-                                print(f"\n  \033[33m⚠ {msg}\033[0m")
-                            try:
-                                decision = input("  approve? [y/N] ").strip().lower()
-                            except (KeyboardInterrupt, EOFError):
-                                decision = "n"
-                            stream_input = Command(resume=decision)
-                            break  # restart stream with resume command
+        # Branch manager — tracks named conversation branches
+        branch_manager = BranchManager()
+        thread_id = branch_manager.switch(branch_manager.get_active())
+        graph_config = {"configurable": {"thread_id": thread_id}}
 
-                        if not isinstance(node_output, dict):
-                            continue
-                        if node_name == "think":
-                            msgs = node_output.get("messages", [])
-                            for msg in msgs:
-                                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                                    for tc in msg.tool_calls:
-                                        print(f"  \033[33m⚡ {tc['name']}\033[0m({tc['args']})")
-                                elif hasattr(msg, "content") and msg.content:
-                                    print(f"\n{msg.content}")
-                        elif node_name == "act":
-                            msgs = node_output.get("messages", [])
-                            for msg in msgs:
-                                content = str(msg.content)
-                                if len(content) > 500:
-                                    content = content[:500] + "..."
-                                print(f"  \033[32m→ {content}\033[0m")
-                    if interrupted:
-                        break  # restart outer while loop with resume
+        # Welcome message
+        print("     (•ᴗ•)  smol — a tiny coding agent   ")
+        print("╭────────────────────────────────────────╮")
+        print("│           SMOL Coding Agent            │")
+        print("│  /help for commands, Ctrl+C to exit    │")
+        print(f"│  Provider: {provider}, Model: {model:<16s}│")
+        print("╰────────────────────────────────────────╯")
+        print()
+        command_context = {
+            "graph": graph,
+            "graph_config": graph_config,
+            "llm": llm,
+            "cost_tracker": cost_tracker,
+            "provider": provider,
+            "model": model,
+            "branch_manager": branch_manager,
+        }
+
+        # The REPL loop
+        while True:
+            try:
+                active_branch = branch_manager.get_active()
+                user_input = input(f"\033[36msmol[{active_branch}]>\033[0m ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nGoodbye!")
+                break
+
+            if not user_input:
+                continue
+
+            if user_input.startswith("/"):
+                result = dispatch(user_input, **command_context)
+
+                if result is None:
+                    print(f"Unknown command: {user_input}")
+                elif result == "__EXIT__":
+                    break
+                elif result.startswith("__NEW_THREAD__"):
+                    thread_id = result.removeprefix("__NEW_THREAD__")
+                    graph_config = {"configurable": {"thread_id": thread_id}}
+                    command_context["graph_config"] = graph_config
+                    print("Conversation cleared.")
+                elif result.startswith("__SWITCH_BRANCH__"):
+                    payload = result.removeprefix("__SWITCH_BRANCH__")
+                    first_line, _, message = payload.partition("\n")
+                    thread_id, _, _ = first_line.partition(":")
+                    graph_config = {"configurable": {"thread_id": thread_id}}
+                    command_context["graph_config"] = graph_config
+                    if message:
+                        print(message)
                 else:
-                    break  # stream exhausted normally, exit while loop
+                    print(result)
+                continue
 
-        except KeyboardInterrupt:
-            print("\n(interrupted)")
-        except Exception as e:
-            print(f"\033[31mError: {e}\033[0m")
+            # Build per-turn stream input.
+            # Only pass fields that reset each turn; everything else
+            # (memory, max_iterations, last_tool_call) is carried forward
+            # from the checkpoint so it isn't wiped on every message.
+            existing = graph.get_state(graph_config)
+            is_new_thread = not existing or not existing.values
+            stream_input = {
+                "messages": [HumanMessage(content=user_input)],
+                "iteration": 0,
+                "workspace_context": workspace.to_prompt_string(),  # refresh each turn
+                "last_tool_call": None,  # reset loop-detection per turn
+            }
+            if is_new_thread:
+                stream_input["max_iterations"] = max_iter
+                stream_input["memory"] = {"task": "", "files": [], "notes": []}
 
-    print("Session ended.")
-    await mcp_manager.close()
-    db_conn.close()
+            # Run the graph
+            try:
+                while True:
+                    interrupted = False
+                    for event in graph.stream(stream_input, graph_config, stream_mode="updates"):
+                        if not isinstance(event, dict):
+                            continue
+                        for node_name, node_output in event.items():
+                            if node_name == "__interrupt__":
+                                interrupted = True
+                                interrupts = node_output if isinstance(node_output, (list, tuple)) else [node_output]
+                                for intr in interrupts:
+                                    msg = intr.value.get("message", f"Approve {intr.value.get('tool')}?") if hasattr(intr, "value") else str(intr)
+                                    print(f"\n  \033[33m⚠ {msg}\033[0m")
+                                try:
+                                    decision = input("  approve? [y/N] ").strip().lower()
+                                except (KeyboardInterrupt, EOFError):
+                                    decision = "n"
+                                stream_input = Command(resume=decision)
+                                break
+
+                            if not isinstance(node_output, dict):
+                                continue
+                            if node_name == "think":
+                                msgs = node_output.get("messages", [])
+                                for msg in msgs:
+                                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                                        for tc in msg.tool_calls:
+                                            print(f"  \033[33m⚡ {tc['name']}\033[0m({tc['args']})")
+                                    elif hasattr(msg, "content") and msg.content:
+                                        print(f"\n{msg.content}")
+                            elif node_name == "act":
+                                msgs = node_output.get("messages", [])
+                                for msg in msgs:
+                                    content = str(msg.content)
+                                    if len(content) > 500:
+                                        content = content[:500] + "..."
+                                    print(f"  \033[32m→ {content}\033[0m")
+                        if interrupted:
+                            break
+                    else:
+                        break
+
+            except KeyboardInterrupt:
+                print("\n(interrupted)")
+            except Exception as e:
+                print(f"\033[31mError: {e}\033[0m")
+
+        print("Session ended.")
+    finally:
+        await mcp_manager.close()
+        if db_conn is not None:
+            db_conn.close()
 
 
 if __name__ == "__main__":
