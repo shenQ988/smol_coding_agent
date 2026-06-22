@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 from agent.graph import build_graph
+from agent.branches import BranchManager
 from context.workspace import WorkspaceContext
 from tools import filesystem, shell, search
 from agent.state import create_initial_state
@@ -100,8 +101,9 @@ async def main():
         cost_tracker= cost_tracker
     )
 
-    # Session config — LangGraph uses thread_id for session management
-    thread_id = "default"
+    # Branch manager — tracks named conversation branches
+    branch_manager = BranchManager()
+    thread_id = branch_manager.switch(branch_manager.get_active())
     graph_config = {"configurable": {"thread_id": thread_id}}
 
     # Welcome message
@@ -115,15 +117,17 @@ async def main():
     command_context = {
         "graph": graph,
         "graph_config": graph_config,
-        "llm": llm,      # now this is defined
+        "llm": llm,
         "cost_tracker": cost_tracker,
         "provider": provider,
         "model": model,
+        "branch_manager": branch_manager,
     }
     # The REPL loop
     while True:
         try:
-            user_input = input("\033[36magent>\033[0m ").strip()
+            active_branch = branch_manager.get_active()
+            user_input = input(f"\033[36msmol[{active_branch}]>\033[0m ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nGoodbye!")
             break
@@ -163,6 +167,14 @@ async def main():
                 graph_config = {"configurable": {"thread_id": thread_id}}
                 command_context["graph_config"] = graph_config
                 print("Conversation cleared.")
+            elif result.startswith("__SWITCH_BRANCH__"):
+                payload = result.removeprefix("__SWITCH_BRANCH__")
+                first_line, _, message = payload.partition("\n")
+                thread_id, _, branch_name = first_line.partition(":")
+                graph_config = {"configurable": {"thread_id": thread_id}}
+                command_context["graph_config"] = graph_config
+                if message:
+                    print(message)
             else:
                 print(result)
             continue

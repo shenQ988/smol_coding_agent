@@ -1,6 +1,7 @@
 """Graph nodes — the think/act/observe logic of the ReAct loop."""
 
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from langchain_core.messages import SystemMessage, ToolMessage
@@ -9,6 +10,8 @@ from langgraph.types import interrupt
 from agent.state import AgentState
 from tools.registry import is_risky
 from context.skills import SkillStore
+
+TOOL_TIMEOUT = 30  # seconds before a tool call is killed
 
 def build_system_message(state: AgentState, skill_store=None) -> SystemMessage:
     """Construct the system prompt from workspace context and memory."""
@@ -55,9 +58,6 @@ def think(state: AgentState, llm_with_tools, skill_store=None, cost_tracker=None
             usage.get("output_tokens", 0)
         )
 
-    print(f"DEBUG AI: response = {response}")
-    print(f"DEBUG AI: content = {response.content}")
-    print(f"DEBUG AI: tool_calls = {response.tool_calls}")
     return {"messages": [response]}
 
 
@@ -78,13 +78,13 @@ def act(state: AgentState, tool_map: dict) -> dict[str, Any]:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
 
-        # Approval gate for risky tools (replaces Raschka's approve())
+        # Approval gate for risky tools
         if is_risky(tool_name):
-            user_decision = interrupt({
-                "tool": tool_name,
-                "args": tool_args,
-                "message": f"Approve {tool_name} with args {tool_args}? (yes/no)"
-            })
+            if tool_name == "run_shell":
+                msg = f"Run shell command?\n  $ {tool_args.get('command', '')}"
+            else:
+                msg = f"Approve {tool_name}?\n  args: {tool_args}"
+            user_decision = interrupt({"tool": tool_name, "args": tool_args, "message": msg})
             if user_decision.lower() not in ("yes", "y"):
                 results.append(ToolMessage(
                     content=f"Tool {tool_name} was denied by user.",
@@ -92,7 +92,7 @@ def act(state: AgentState, tool_map: dict) -> dict[str, Any]:
                 ))
                 continue
 
-        # Execute the tool
+        # Execute the tool with a timeout
         tool_fn = tool_map.get(tool_name)
         if tool_fn is None:
             results.append(ToolMessage(
@@ -102,7 +102,12 @@ def act(state: AgentState, tool_map: dict) -> dict[str, Any]:
             continue
 
         try:
-            result = tool_fn.invoke(tool_args)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(tool_fn.invoke, tool_args)
+                try:
+                    result = future.result(timeout=TOOL_TIMEOUT)
+                except FuturesTimeoutError:
+                    result = f"Error: '{tool_name}' timed out after {TOOL_TIMEOUT}s"
         except Exception as e:
             result = f"Error: {e}"
 
@@ -121,25 +126,57 @@ def act(state: AgentState, tool_map: dict) -> dict[str, Any]:
                 files.append(path)
                 memory["files"] = files[-10:]  # keep last 10
 
+    last_tc = last_message.tool_calls[-1] if last_message.tool_calls else None
+    last_tool_call = {"name": last_tc["name"], "args": last_tc["args"]} if last_tc else None
+
     return {
         "messages": results,
         "iteration": state["iteration"] + 1,
         "memory": memory,
+        "last_tool_call": last_tool_call,
     }
 
 
 def should_continue(state: AgentState) -> str:
     """
-    Conditional edge: decide whether to loop or stop.
+    Conditional edge after think. Returns one of:
+      "continue"  — LLM wants to call a tool, all checks pass
+      "done"      — LLM gave a final answer (or empty response)
+      "summarize" — hard stop due to iteration cap or loop; ask LLM to wrap up
     """
-    # Hit iteration limit?
-    if state["iteration"] >= state["max_iterations"]:
+    last_message = state["messages"][-1]
+    tool_calls = getattr(last_message, "tool_calls", None) or []
+
+    # No tool calls → LLM finished (or returned nothing)
+    if not tool_calls:
+        if not getattr(last_message, "content", None):
+            print("  ⚠ LLM returned an empty response.")
         return "done"
 
-    # Check last message — if it has tool_calls, continue the loop
-    last_message = state["messages"][-1]
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "continue"
+    # LLM wants to keep going — run safety checks before allowing it
+    current_call = {"name": tool_calls[0]["name"], "args": tool_calls[0]["args"]}
 
-    # No tool calls = LLM gave a final text answer
-    return "done"
+    if state.get("last_tool_call") == current_call:
+        print(f"  ⚠ Loop detected: '{current_call['name']}' repeated with identical args.")
+        return "summarize"
+
+    if state["iteration"] >= state["max_iterations"]:
+        print(f"  ⚠ Iteration limit ({state['max_iterations']}) reached.")
+        return "summarize"
+
+    return "continue"
+
+
+def summarize(state: AgentState, llm) -> dict[str, Any]:
+    """
+    Summarize node: invoked when the agent hits a hard stop (iteration cap or loop).
+    Asks the LLM — without tools — to tell the user what was done and what remains.
+    """
+    summary_prompt = SystemMessage(content=(
+        "You were stopped before finishing because you hit the step limit or entered a loop. "
+        "Review the conversation and give the user a concise summary: "
+        "what was completed, what still needs to be done, and any relevant file paths. "
+        "Be direct and specific. Do not call any tools."
+    ))
+    response = llm.invoke([summary_prompt] + state["messages"])
+    return {"messages": [response]}

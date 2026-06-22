@@ -3,22 +3,16 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 
 
-def compact_history(messages: list, llm, keep_recent: int = 4) -> list:
-    """Summarize older messages, keep the most recent ones verbatim."""
-    if len(messages) <= keep_recent:
-        return messages   # not enough history to bother compacting
-
-    recent = messages[-keep_recent:]
-    to_summarize = messages[:-keep_recent]
-
+def summarize_messages(messages: list, llm) -> str:
+    """Summarize a list of messages into a plain string using the LLM."""
     transcript_lines = []
-    for m in to_summarize:
+    for m in messages:
         role = type(m).__name__.replace("Message", "")
         content = m.content if isinstance(m.content, str) else str(m.content)
         transcript_lines.append(f"{role}: {content[:300]}")
     transcript = "\n".join(transcript_lines)
 
-    summary_response = llm.invoke([
+    response = llm.invoke([
         SystemMessage(content=(
             "Summarize this conversation history concisely. Keep: "
             "file names touched, key decisions made, and the current task state. "
@@ -26,9 +20,17 @@ def compact_history(messages: list, llm, keep_recent: int = 4) -> list:
         )),
         HumanMessage(content=transcript),
     ])
+    return response.content
 
-    summary_msg = SystemMessage(
-        content=f"[Earlier conversation summary]\n{summary_response.content}"
-    )
 
+def compact_history(messages: list, llm, keep_recent: int = 4) -> list:
+    """Summarize older messages, keep the most recent ones verbatim."""
+    if len(messages) <= keep_recent:
+        return messages
+
+    recent = messages[-keep_recent:]
+    to_summarize = messages[:-keep_recent]
+
+    summary_text = summarize_messages(to_summarize, llm)
+    summary_msg = SystemMessage(content=f"[Earlier conversation summary]\n{summary_text}")
     return [summary_msg] + recent

@@ -11,18 +11,19 @@ class AgentState(TypedDict):
     """
     State that flows between every node in the graph.
 
-    - messages: The conversation history. add_messages is a LangGraph
-      "reducer" — it appends new messages instead of replacing the list.
-    - iteration: Current step count in the ReAct loop.
-    - max_iterations: Safety limit .
+    - messages: The conversation history. add_messages appends instead of replacing.
+    - iteration: Per-turn ReAct step count, reset each user message.
+    - max_iterations: Per-turn safety cap.
     - workspace_context: Static string with git info, injected into system prompt.
-    - memory: Distilled notes (like Raschka's memory dict).
+    - memory: Distilled notes persisted across turns.
+    - last_tool_call: The last tool call executed, used for loop detection.
     """
     messages: Annotated[list[BaseMessage], add_messages]
     iteration: int
     max_iterations: int
     workspace_context: str
     memory: dict[str, Any]
+    last_tool_call: dict[str, Any] | None
 
 
 def create_initial_state(
@@ -30,10 +31,6 @@ def create_initial_state(
     workspace_context: str = "",
     max_iterations: int = 15,
 ) -> AgentState:
-    """
-    Create a fresh AgentState for a new user turn.
-    
-    """
     return {
         "messages": [HumanMessage(content=user_message)],
         "iteration": 0,
@@ -44,4 +41,5 @@ def create_initial_state(
             "files": [],
             "notes": [],
         },
+        "last_tool_call": None,
     }

@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent.state import AgentState
-from agent.nodes import think, act, should_continue
+from agent.nodes import think, act, should_continue, summarize
 from tools.registry import  get_builtin_tools
 from providers.factory import create_llm
 from mcp_integration.client import MCPManager
@@ -50,32 +50,36 @@ def build_graph(
 
     # 4. Create partial node functions (bake in dependencies)
     skill_store = SkillStore(Path(__file__).parent.parent / "skills")
-    think_node = partial(think, llm_with_tools=llm_with_tools, skill_store=skill_store, cost_tracker=cost_tracker)
-    act_node = partial(act, tool_map=tool_map)
+    think_node    = partial(think,     llm_with_tools=llm_with_tools, skill_store=skill_store, cost_tracker=cost_tracker)
+    act_node      = partial(act,       tool_map=tool_map)
+    summarize_node = partial(summarize, llm=llm)
 
     # 5. Build the graph
     graph = StateGraph(AgentState)
+    graph.add_node("think",     think_node)
+    graph.add_node("act",       act_node)
+    graph.add_node("summarize", summarize_node)
 
-    # Add nodes
-    graph.add_node("think", think_node)
-    graph.add_node("act", act_node)
-
-    # Set entry point
     graph.set_entry_point("think")
 
-    # Add edges
-    # thinchk always goes to should_continue eck
+    #
+    # Edges:
+    #
+    #   think ──► should_continue ──► "continue"  → act → think   (ReAct loop)
+    #                               ──► "done"      → END          (normal finish)
+    #                               ──► "summarize" → summarize    (hit cap / loop)
+    #
     graph.add_conditional_edges(
-        "think", #source node 
+        "think",
         should_continue,
         {
-            "continue": "act",     # if should_continue, use a tool → execute it
-            "done": END,           # LLM gave final answer → stop
+            "continue":  "act",
+            "done":      END,
+            "summarize": "summarize",
         }
     )
-
-    # After acting, always go back to think (the ReAct loop)
-    graph.add_edge("act", "think") 
+    graph.add_edge("act",       "think")
+    graph.add_edge("summarize", END)
 
     # 6. Compile with checkpointer for session persistence
     checkpointer = MemorySaver()  # In-memory; swap to SqliteSaver for disk persistence
