@@ -4,13 +4,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
 
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.types import interrupt
 
 from agent.state import AgentState
 from tools.registry import is_risky
 
 TOOL_TIMEOUT = 30  # seconds before a tool call is killed
+_DEFAULT_MAX_ITERATIONS = 15  # fallback if checkpoint never received max_iterations
 
 def build_system_message(state: AgentState, skill_store=None) -> SystemMessage:
     """Construct the system prompt from workspace context and memory."""
@@ -49,13 +50,16 @@ def think(state: AgentState, llm_with_tools, skill_store=None, cost_tracker=None
     system = build_system_message(state, skill_store)
     messages = [system] + state["messages"]
 
-    response = llm_with_tools.invoke(messages)
-    if cost_tracker is not None and getattr(response, "usage_metadata", None):
-        usage = response.usage_metadata
-        cost_tracker.add_usage(
-            usage.get("input_tokens", 0), 
-            usage.get("output_tokens", 0)
-        )
+    try:
+        response = llm_with_tools.invoke(messages)
+        if cost_tracker is not None and getattr(response, "usage_metadata", None):
+            usage = response.usage_metadata
+            cost_tracker.add_usage(
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0)
+            )
+    except Exception as e:
+        response = AIMessage(content=f"[LLM error: {e}]")
 
     return {"messages": [response]}
 
@@ -161,8 +165,8 @@ def should_continue(state: AgentState) -> str:
         print(f"  ⚠ Loop detected: '{current_call['name']}' repeated with identical args.")
         return "summarize"
 
-    if state["iteration"] >= state["max_iterations"]:
-        print(f"  ⚠ Iteration limit ({state['max_iterations']}) reached.")
+    if state.get("iteration", 0) >= state.get("max_iterations", _DEFAULT_MAX_ITERATIONS):
+        print(f"  ⚠ Iteration limit ({state.get('max_iterations', _DEFAULT_MAX_ITERATIONS)}) reached.")
         return "summarize"
 
     return "continue"

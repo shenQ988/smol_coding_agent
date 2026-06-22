@@ -10,10 +10,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from mcp_integration.client import MCPManager
 from mcp_integration.tool_bridge import create_mcp_langchain_tools
-from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 from agent.graph import build_graph
+from agent.state import build_turn_input
 from agent.branches import BranchManager
 from context.workspace import WorkspaceContext
 from tools import filesystem, shell, search
@@ -83,7 +83,7 @@ async def main():
     skill_store = SkillStore(Path("./skills"))
     set_skill_store(skill_store)
     
-
+    
     #create the llm
     llm = create_llm(provider, model, temperature=agent_config.get("temperature", 0))
 
@@ -164,21 +164,11 @@ async def main():
             # Refresh workspace context (branch, status, recent commits)
             workspace.refresh()
 
-            # Build per-turn stream input.
-            # Only pass fields that reset each turn; everything else
-            # (memory, max_iterations, last_tool_call) is carried forward
-            # from the checkpoint so it isn't wiped on every message.
-            existing = graph.get_state(graph_config)
-            is_new_thread = not existing or not existing.values
-            stream_input = {
-                "messages": [HumanMessage(content=user_input)],
-                "iteration": 0,
-                "workspace_context": workspace.to_prompt_string(),  # refresh each turn
-                "last_tool_call": None,  # reset loop-detection per turn
-            }
-            if is_new_thread:
-                stream_input["max_iterations"] = max_iter
-                stream_input["memory"] = {"task": "", "files": [], "notes": []}
+            stream_input, _ = build_turn_input(
+                graph, graph_config, user_input,
+                workspace_context=workspace.to_prompt_string(),
+                max_iterations=max_iter,
+            )
 
             # Run the graph
             try:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage
 
 from agent.branches import BranchManager
 from memory.reduction import summarize_messages
@@ -30,10 +30,13 @@ def fold_branch(graph, branch_manager: BranchManager, llm, branch_name: str) -> 
     if not messages:
         summary_text = "(no messages recorded in this branch)"
     else:
-        summary_text = summarize_messages(messages, llm)
+        try:
+            summary_text = summarize_messages(messages, llm)
+        except Exception as e:
+            return f"Error: could not summarise branch '{branch_name}' — {e}"
 
     # Append the summary to the parent thread
-    fold_message = SystemMessage(
+    fold_message = HumanMessage(
         content=f"[Returning from branch '{branch_name}']\n{summary_text}"
     )
     parent_config = {"configurable": {"thread_id": parent_tid}}

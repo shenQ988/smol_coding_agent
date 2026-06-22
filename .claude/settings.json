@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(.venv/bin/pip uninstall *)",
-      "Bash(.venv/bin/pip install *)"
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -m pytest tests/test_llm_failures.py -q --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/test_graph_routing.py -q --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/test_branches.py tests/test_fold.py -q --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/test_memory.py -q --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/test_tools_security.py -q --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/ -q --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/test_fold.py::test_fold_injects_human_message_not_system_message tests/test_fold.py::test_fold_no_system_messages_in_parent_checkpoint tests/test_memory.py::test_memory_not_reset_on_second_turn tests/test_memory.py::test_is_new_thread_true_after_branch_seed -q --tb=no)"
     ]
   }
 }

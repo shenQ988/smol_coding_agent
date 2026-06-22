@@ -26,6 +26,37 @@ class AgentState(TypedDict):
     last_tool_call: dict[str, Any] | None
 
 
+def build_turn_input(
+    graph,
+    config: dict,
+    user_message: str,
+    workspace_context: str = "",
+    max_iterations: int = 15,
+) -> tuple[dict, bool]:
+    """Build per-turn stream_input for graph.stream().
+
+    Checks whether the thread's checkpoint already contains max_iterations.
+    If not (fresh thread or branch seeded without full init), includes
+    max_iterations and a blank memory in the returned dict so the graph
+    initialises them.  Callers should pass the returned dict directly to
+    graph.stream() — never hard-code this logic elsewhere.
+
+    Returns (stream_input, needs_init).
+    """
+    existing = graph.get_state(config)
+    needs_init = not existing or "max_iterations" not in (existing.values or {})
+    stream_input: dict = {
+        "messages": [HumanMessage(content=user_message)],
+        "iteration": 0,
+        "workspace_context": workspace_context,
+        "last_tool_call": None,
+    }
+    if needs_init:
+        stream_input["max_iterations"] = max_iterations
+        stream_input["memory"] = {"task": "", "files": [], "notes": []}
+    return stream_input, needs_init
+
+
 def create_initial_state(
     user_message: str,
     workspace_context: str = "",

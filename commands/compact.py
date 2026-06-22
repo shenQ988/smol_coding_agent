@@ -11,7 +11,10 @@ def run(graph, graph_config, llm, **kwargs) -> str:
     if len(old_messages) <= 4:
         return "Not enough history to compact."
 
-    compacted = compact_history(old_messages, llm)
+    try:
+        compacted = compact_history(old_messages, llm)
+    except Exception as e:
+        return f"Error: compact failed — {e}"
 
     removals = [RemoveMessage(id=m.id) for m in old_messages]
     graph.update_state(graph_config, {"messages": removals + compacted})

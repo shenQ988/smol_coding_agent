@@ -3,12 +3,7 @@
 from agent.graph import build_graph
 
 
-def main():
-    graph = build_graph(
-        provider="anthropic",
-        model="claude-sonnet-4-6",
-    )
-
+def main(graph):
     compiled_graph = graph.get_graph()
 
     # ASCII — quick terminal check
@@ -36,4 +31,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    graph, db_conn = build_graph(provider="anthropic", model="claude-sonnet-4-6")
+    try:
+        main(graph)
+    finally:
+        db_conn.close()
