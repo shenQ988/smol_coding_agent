@@ -10,6 +10,14 @@ class WorkspaceContext:
     def __init__(self, cwd: Path):
         self.cwd = cwd
         self.repo_root = self._git(["rev-parse", "--show-toplevel"], str(cwd))
+        self.branch: str = "-"
+        self.status: str = "clean"
+        self.recent_commits: list[str] = []
+        self.project_docs: dict[str, str] = {}
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Re-scan git state and project docs. Called once per REPL turn."""
         self.branch = self._git(["branch", "--show-current"], "-")
         self.status = self._git(["status", "--short"], "clean")[:1500]
         self.recent_commits = [

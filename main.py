@@ -161,6 +161,9 @@ async def main():
                     print(result)
                 continue
 
+            # Refresh workspace context (branch, status, recent commits)
+            workspace.refresh()
+
             # Build per-turn stream input.
             # Only pass fields that reset each turn; everything else
             # (memory, max_iterations, last_tool_call) is carried forward
